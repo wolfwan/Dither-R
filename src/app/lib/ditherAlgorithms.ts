@@ -389,99 +389,73 @@ export const processImage = (
   }
 
   if (algorithm === "Circuitry") {
-    // Circuitry: PCB-style traces
-    // User request: lines only go vertical or 45 degrees, and MUST connect.
-    // We use a phase-accumulation approach to ensure continuous lines.
+    // PCB-style traces with sharp angles (only 0°, 45°, 90°, 135°)
+    // Traces follow luminance contours but maintain geometric precision
     
-    const width = original.width;
-    const height = original.height;
+    const traceSpacing = 8; // Pixels between parallel traces
+    const traceWidth = 2; // Width of each trace
     
-    // Buffer to track the vertical phase shift for each column
-    const phaseY = new Float32Array(width).fill(0);
-    const freq = 0.8; // Controls line density
-    
-    // Temporary buffer for smoothing phase to prevent tearing
-    const nextPhaseY = new Float32Array(width);
-
     for (let y = 0; y < height; y++) {
-        const rowOffset = y * width * 4;
+      for (let x = 0; x < width; x++) {
+        const i = getPixelIndex(x, y, width);
+        const r = data[i];
+        const g = data[i+1];
+        const b = data[i+2];
+        const lum = luminance(r, g, b);
         
-        // 1. Calculate target slope for this row based on luminance
-        // We want strict Vertical (0) or Diagonal (1) based on regions
-        const rowSlopes = new Float32Array(width);
+        // Divide image into regions based on luminance
+        // Each region gets a distinct trace direction
+        const lumBand = Math.floor((lum / 255) * 8);
         
-        for (let x = 0; x < width; x++) {
-            const i = rowOffset + x * 4;
-            const r = data[i];
-            const g = data[i+1];
-            const b = data[i+2];
-            const lum = luminance(r, g, b);
-            
-            // Quantize to bands to create distinct regions of direction
-            // 4 bands: Vert | Diag | Vert | Diag
-            const band = Math.floor(lum / 255 * 5); 
-            const isDiag = band % 2 === 1;
-            
-            rowSlopes[x] = isDiag ? 1 : 0;
-        }
-
-        // 2. Update phaseY buffer
-        // We diffuse the phase horizontally to ensure lines curve instead of breaking
-        // This is crucial for the "connecting" requirement
+        let isTrace = false;
         
-        for (let x = 0; x < width; x++) {
-             // Add the vertical accumulation (slope * freq)
-             // If slope is 1, phase increases by freq per row -> diagonal line
-             // If slope is 0, phase constant per row -> vertical line
-             let currentP = phaseY[x] + rowSlopes[x] * freq;
-             nextPhaseY[x] = currentP;
+        // Determine trace direction based on luminance band
+        // Use strict geometric angles only
+        const direction = lumBand % 4;
+        
+        if (direction === 0) {
+          // Horizontal traces (0°)
+          isTrace = (y % traceSpacing) < traceWidth;
+        } else if (direction === 1) {
+          // Vertical traces (90°)
+          isTrace = (x % traceSpacing) < traceWidth;
+        } else if (direction === 2) {
+          // Diagonal traces (45°)
+          isTrace = ((x + y) % traceSpacing) < traceWidth;
+        } else {
+          // Diagonal traces (135°)
+          isTrace = ((x - y + height) % traceSpacing) < traceWidth;
+        }
+        
+        // Add some via/pad features at intersections
+        const viaSize = 3;
+        const viaSpacing = 32;
+        const isVia = (x % viaSpacing < viaSize) && (y % viaSpacing < viaSize);
+        
+        // Add occasional breaks in traces for realism
+        const hasBreak = (Math.sin(x * 0.13) * Math.sin(y * 0.17) > 0.95);
+        
+        let bias = 0;
+        if (isVia) {
+          bias = 140; // Bright via
+        } else if (isTrace && !hasBreak) {
+          bias = 100; // Trace line
+        } else {
+          bias = -100; // Background
         }
 
-        // Apply horizontal smoothing to the accumulated phase
-        // This makes the transition between Vert and Diag regions smooth (curved lines)
-        // rather than sharp discontinuous breaks.
-        for (let x = 1; x < width - 1; x++) {
-            phaseY[x] = nextPhaseY[x-1] * 0.2 + nextPhaseY[x] * 0.6 + nextPhaseY[x+1] * 0.2;
-        }
-        // Handle edges
-        phaseY[0] = nextPhaseY[0];
-        phaseY[width-1] = nextPhaseY[width-1];
+        const closest = getClosestColor(
+          clamp(r + bias),
+          clamp(g + bias),
+          clamp(b + bias),
+          palette
+        );
 
-        // 3. Render the row
-        for (let x = 0; x < width; x++) {
-            const i = rowOffset + x * 4;
-            const r = data[i];
-            const g = data[i+1];
-            const b = data[i+2];
-            
-            // The phase at this pixel is the base horizontal phase (x * freq)
-            // plus the accumulated vertical phase shift (phaseY)
-            const phase = x * freq + phaseY[x];
-            
-            const traceSignal = Math.abs(Math.sin(phase));
-            
-            // Threshold for line thickness. 
-            // Diagonal lines effectively look thinner in X-cross-section if we don't adjust,
-            // but standard constant threshold usually looks fine and consistent with pixel art.
-            const isTrace = traceSignal < 0.25; 
-            
-            let bias = -120; // Background
-            if (isTrace) {
-                bias = 120; // Trace
-            }
-
-            const closest = getClosestColor(
-                clamp(r + bias),
-                clamp(g + bias),
-                clamp(b + bias),
-                palette
-            );
-
-            data[i] = closest.r;
-            data[i+1] = closest.g;
-            data[i+2] = closest.b;
-            data[i+3] = 255;
-        }
+        data[i] = closest.r;
+        data[i+1] = closest.g;
+        data[i+2] = closest.b;
+        data[i+3] = 255;
+      }
     }
     return output;
   }
