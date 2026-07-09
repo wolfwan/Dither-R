@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <path fill-rule="evenodd" d="
+    M 50,10
+    A 40,40 0 1 0 50,90
+    A 40,40 0 1 0 50,10
+    Z
+    M 50,30
+    A 20,20 0 1 1 50,70
+    A 20,20 0 1 1 50,30
+    Z
+  " fill="black"/>
+</svg>
